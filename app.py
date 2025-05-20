@@ -64,6 +64,15 @@ def lifespan(app: FastAPI) -> Generator[None, None, None]:
     # (optional) cleanup on shutdown
 
 
+try:
+    meta = joblib.load(META_PATH)
+except Exception as e:
+    raise RuntimeError(
+        f"{META_PATH} could not be un-pickled. "
+        "Did the real file make it into the slug?"
+    ) from e
+
+
 app = FastAPI(title="Spotify Recommender (Annoy)", lifespan=lifespan)
 
 # ── CORS & static files ─────────────────────────────────────────────

@@ -1,5 +1,3 @@
-#!/usr/bin/env python
-# app.py ──────────────────────────────────────────────────────────────
 from pathlib import Path
 from typing import List, Optional, Generator
 
@@ -13,11 +11,9 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
-# ── S3 URLs ──────────────────────────────────────────────────────────
-ANN_URL = "https://my-spotify-indices.s3.us-east-2.amazonaws.com/annoy_index_small.ann"
+# ── S3 URLs & local paths ───────────────────────────────────────────
+ANN_URL = "https://my-spotify-indices.s3.us-east-2.amazonaws.com/annoy_index.ann"
 META_URL = "https://my-spotify-indices.s3.us-east-2.amazonaws.com/metadata.joblib"
-
-# ── Local paths ──────────────────────────────────────────────────────
 BASE_DIR = Path(__file__).parent
 ANNOY_PATH = BASE_DIR / "annoy_index.ann"
 META_PATH = BASE_DIR / "metadata.joblib"
@@ -25,29 +21,19 @@ STATIC_DIR = BASE_DIR / "static"
 
 
 def _fetch_if_needed(url: str, dest: Path):
-    """
-    Download from `url` if `dest` is missing or suspiciously small (pointer file).
-    """
     if not dest.exists() or dest.stat().st_size < 1_000_000:
-        resp = requests.get(url, timeout=120)
-        resp.raise_for_status()
-        dest.write_bytes(resp.content)
-
-# ── FastAPI app with lifespan loader ─────────────────────────────────
+        r = requests.get(url, timeout=120)
+        r.raise_for_status()
+        dest.write_bytes(r.content)
 
 
 def lifespan(app: FastAPI) -> Generator[None, None, None]:
-    # 1) Ensure metadata.joblib is present
+    # 1) fetch & load metadata
     _fetch_if_needed(META_URL, META_PATH)
-
-    # 2) Load metadata
     try:
         meta = joblib.load(META_PATH)
     except Exception as e:
-        raise RuntimeError(
-            f"{META_PATH} could not be un-pickled. "
-            "Did the real file make it into the slug?"
-        ) from e
+        raise RuntimeError(f"{META_PATH} could not be un‑pickled") from e
 
     track_ids = meta["track_ids"]
     track_names = meta["track_names"]
@@ -56,26 +42,21 @@ def lifespan(app: FastAPI) -> Generator[None, None, None]:
     f_dim = meta["f_dim"]
     years = meta.get("years")
 
-    # 3) Ensure Annoy index is present
+    # 2) fetch & load Annoy index
     _fetch_if_needed(ANN_URL, ANNOY_PATH)
-
-    # 4) Load Annoy index
     ann = AnnoyIndex(f_dim, "angular")
     if not ann.load(str(ANNOY_PATH)):
-        raise RuntimeError(f"Could not load Annoy index from {ANNOY_PATH}")
+        raise RuntimeError("Failed to load Annoy index")
 
-    # 5) Build search DataFrame from metadata arrays
-    data = {
-        "track_id":    track_ids,
-        "track_name":  track_names,
-        "artist_name": artist_names,
-    }
+    # 3) build search DataFrame
+    data = {"track_id": track_ids, "track_name": track_names,
+            "artist_name": artist_names}
     if years is not None:
         data["year"] = years
     df = pd.DataFrame(data)
     df["track_name_lc"] = df["track_name"].str.lower()
 
-    # 6) Expose to app.state
+    # 4) stash in app.state
     app.state.df = df
     app.state.ann_index = ann
     app.state.track_ids = track_ids
@@ -83,20 +64,12 @@ def lifespan(app: FastAPI) -> Generator[None, None, None]:
     app.state.artist_names = artist_names
     app.state.id2idx = id2idx
 
-    yield  # ── application starts serving here ──
-    # (optional) cleanup on shutdown
+    yield  # ← after this, the server starts
 
 
-app = FastAPI(title="Spotify Recommender (Annoy)", lifespan=lifespan)
-
-# ── CORS & static files ─────────────────────────────────────────────
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+app = FastAPI(title="Spotify Recommender", lifespan=lifespan)
+app.add_middleware(CORSMiddleware, allow_origins=[
+                   "*"], allow_methods=["*"], allow_headers=["*"])
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 

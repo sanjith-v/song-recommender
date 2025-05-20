@@ -1,0 +1,92 @@
+/* ──────────────────────────────────────────────────────────────
+   Spotify-like green-on-black palette + small layout helpers
+   ------------------------------------------------------------
+   Place in:  static/styles.css   (and link from index.html)
+   ─────────────────────────────────────────────────────────── */
+
+   :root {
+    --green:       #1db954;
+    --green-dark:  #169943;
+    --bg-dark:     #121212;
+    --bg-mid:      #181818;
+    --text-light:  #ffffff;
+    --text-muted:  #b3b3b3;
+    --border:      #282828;
+    --radius:      4px;
+    --trans-fast:  0.15s;
+    font-size:     16px;
+  }
+  
+  /* -------- CSS reset -------- */
+  *, *::before, *::after { box-sizing:border-box; margin:0; padding:0; }
+  
+  /* -------- Page -------- */
+  body {
+    font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background:   var(--bg-dark);
+    color:        var(--text-light);
+    line-height:  1.55;
+    padding:      2rem;
+    min-height:   100vh;
+  }
+  
+  /* -------- Headings -------- */
+  h1, h2 {
+    font-weight: 600;
+    margin-bottom: 1rem;
+    color: var(--text-light);
+  }
+  
+  /* -------- Inputs & buttons -------- */
+  input[type="text"]{
+    width: 100%;
+    max-width: 420px;
+    padding: .65rem .9rem;
+    font-size: 1rem;
+    color: var(--text-light);
+    background: var(--bg-mid);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+  }
+  
+  button{
+    padding: .65rem 1.1rem;
+    font-size: 1rem;
+    margin-left: .6rem;
+    cursor: pointer;
+    border: 0;
+    border-radius: var(--radius);
+    background: var(--green);
+    color: var(--text-light);
+    transition: background var(--trans-fast);
+  }
+  button:hover{ background: var(--green-dark); }
+  button:disabled{
+    background: var(--border);
+    cursor: not-allowed;
+  }
+  
+  /* -------- List sections -------- */
+  section { margin-top: 2rem; }
+  ul      { list-style:none; margin-top: .75rem; }
+  
+  li.option,
+  li.rec{
+    background: var(--bg-mid);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: .7rem .9rem;
+    margin-bottom: .55rem;
+    transition: background var(--trans-fast);
+  }
+  
+  li.option{ cursor:pointer; }
+  li.option:hover{ background:#1e1e1e; }
+  
+  li.rec   { cursor:default; }
+  
+  /* -------- Utility classes -------- */
+  .small     { font-size:.875rem; }
+  .gray      { color:var(--text-muted); }
+  .hidden    { display:none !important; }  /* override inline js toggles */
+  

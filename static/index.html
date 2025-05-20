@@ -1,0 +1,119 @@
+<!-- index.html  ──────────────────────────────────────────────────────
+     Minimal UI for the Spotify content-based recommender             -->
+
+     <!DOCTYPE html>
+     <html lang="en">
+     <head>
+       <meta charset="UTF-8" />
+       <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+       <title>Spotify Track Recommender</title>
+     
+       <!-- 🟢 Main theme -->
+       <link rel="stylesheet" href="styles.css">
+     </head>
+     
+     <body>
+       <h1>Spotify Track Recommender</h1>
+     
+       <!-- 1 · Search form -->
+       <form id="searchForm">
+         <label for="songInput" class="hidden">Song name</label>
+         <input id="songInput" type="text" placeholder="Type a song title…" required autocomplete="off" />
+         <button id="searchBtn" type="submit">Search</button>
+       </form>
+     
+       <!-- 2 · Search results -->
+       <section id="resultsSection" class="hidden">
+         <h2>Choose the correct track:</h2>
+         <ul id="resultsList"></ul>
+       </section>
+     
+       <!-- 3 · Recommendations -->
+       <section id="recsSection" class="hidden">
+         <h2>Similar tracks:</h2>
+         <ul id="recsList"></ul>
+       </section>
+     
+       <!-- Tiny vanilla-JS controller (unchanged) -->
+       <script>
+         const API = "http://127.0.0.1:8000";
+     
+         const $songInput  = document.getElementById("songInput");
+         const $searchBtn  = document.getElementById("searchBtn");
+         const $resultsSec = document.getElementById("resultsSection");
+         const $resultsUl  = document.getElementById("resultsList");
+         const $recsSec    = document.getElementById("recsSection");
+         const $recsUl     = document.getElementById("recsList");
+     
+         // — SEARCH —
+         document.getElementById("searchForm").addEventListener("submit", async (e) => {
+           e.preventDefault();
+           const q = $songInput.value.trim();
+           if (!q) return;
+           toggleLoading(true);
+           try {
+             const res  = await fetch(`${API}/search?query=${encodeURIComponent(q)}`);
+             if (!res.ok) throw new Error("No matching tracks.");
+             const data = await res.json();
+             renderSearchResults(data);
+           } catch (err) {
+             alert(err.message);
+             resetUI();
+           } finally {
+             toggleLoading(false);
+           }
+         });
+     
+         // Render list of matching tracks
+         function renderSearchResults(tracks){
+           resetUI();
+           tracks.forEach(t => {
+             const li = document.createElement("li");
+             li.className  = "option";
+             li.textContent= `${t.track_name} — ${t.artist_name} (${t.year || "n/a"})`;
+             li.dataset.id = t.track_id;
+             li.addEventListener("click", () => fetchRecs(t.track_id));
+             $resultsUl.appendChild(li);
+           });
+           $resultsSec.classList.remove("hidden");
+         }
+     
+         // Fetch & display recommendations
+         async function fetchRecs(id){
+           toggleLoading(true);
+           try{
+             const res = await fetch(`${API}/recommend?track_id=${id}&k=10`);
+             if(!res.ok) throw new Error("Unable to get recommendations.");
+             renderRecs(await res.json());
+           }catch(err){ alert(err.message); }
+           finally{ toggleLoading(false); }
+         }
+     
+         function renderRecs(recs){
+           $recsUl.innerHTML = "";
+           recs.forEach(r => {
+             const li = document.createElement("li");
+             li.className = "rec";
+             li.innerHTML = `<strong>${r.track_name}</strong> — ${r.artist_name}
+                             <span class="small gray">(score ${r.score.toFixed(3)})</span>`;
+             $recsUl.appendChild(li);
+           });
+           $recsSec.classList.remove("hidden");
+           $recsSec.scrollIntoView({ behavior: "smooth" });
+         }
+     
+         // —— Helpers
+         function resetUI(){
+           $resultsUl.innerHTML = "";
+           $recsUl.innerHTML    = "";
+           $resultsSec.classList.add("hidden");
+           $recsSec.classList.add("hidden");
+         }
+         function toggleLoading(state){
+           $searchBtn.disabled   = state;
+           $searchBtn.textContent= state ? "…" : "Search";
+         }
+       </script>
+     </body>
+     </html>
+     

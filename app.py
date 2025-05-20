@@ -14,7 +14,6 @@ from pydantic import BaseModel
 
 # ── Paths ────────────────────────────────────────────────────────────
 BASE_DIR = Path(__file__).parent
-CSV_PATH = BASE_DIR / "spotify_data.csv"
 ANNOY_PATH = BASE_DIR / "annoy_index.ann"
 META_PATH = BASE_DIR / "metadata.joblib"
 STATIC_DIR = BASE_DIR / "static"
@@ -23,34 +22,37 @@ STATIC_DIR = BASE_DIR / "static"
 
 
 def lifespan(app: FastAPI) -> Generator[None, None, None]:
-    """Load large assets once per worker process."""
-    # ---------- CSV ----------
-    if not CSV_PATH.exists():
-        raise RuntimeError(f"{CSV_PATH} missing in slug")
-    df = (
-        pd.read_csv(CSV_PATH)
-        .loc[:, ["track_id", "track_name", "artist_name", "year"]]
-        .dropna(subset=["track_id", "track_name"])
-    )
-    # Helpful extra column for case-insensitive search
-    df["track_name_lc"] = df["track_name"].str.lower()
-
+    """Load index + metadata once per worker; rebuild search DataFrame."""
     # ---------- Metadata ----------
     if not META_PATH.exists():
         raise RuntimeError(f"{META_PATH} missing in slug")
     meta = joblib.load(META_PATH)
+
     track_ids = meta["track_ids"]
     track_names = meta["track_names"]
     artist_names = meta["artist_names"]
     id2idx = meta["id2idx"]
     f_dim = meta["f_dim"]
+    years = meta.get("years")  # optional
 
     # ---------- Annoy Index ----------
     ann = AnnoyIndex(f_dim, "angular")
     if not ann.load(str(ANNOY_PATH)):
         raise RuntimeError("Could not load Annoy index")
 
-    # Expose everything via app.state  ✅
+    # ---------- Build search DataFrame ----------
+    data = {
+        "track_id":    track_ids,
+        "track_name":  track_names,
+        "artist_name": artist_names,
+    }
+    if years is not None:
+        data["year"] = years
+
+    df = pd.DataFrame(data)
+    df["track_name_lc"] = df["track_name"].str.lower()  # helper col
+
+    # ---------- Expose to app.state ----------
     app.state.df = df
     app.state.ann_index = ann
     app.state.track_ids = track_ids
@@ -59,15 +61,10 @@ def lifespan(app: FastAPI) -> Generator[None, None, None]:
     app.state.id2idx = id2idx
 
     yield  # ---- server starts here ----
-
-    # (optional) cleanup after shutdown
-    # del app.state.df  …
+    # (optional) cleanup on shutdown
 
 
-app = FastAPI(
-    title="Spotify Recommender (Annoy)",
-    lifespan=lifespan,
-)
+app = FastAPI(title="Spotify Recommender (Annoy)", lifespan=lifespan)
 
 # ── CORS & static files ─────────────────────────────────────────────
 app.add_middleware(
@@ -112,7 +109,7 @@ def search_tracks(
     hits = (
         df[df["track_name_lc"].str.contains(query.lower())]
         .head(limit)
-        .drop(columns="track_name_lc")        # hide helper col in response
+        .drop(columns="track_name_lc")
         .to_dict(orient="records")
     )
     if not hits:
@@ -137,26 +134,24 @@ def recommend(
     seed_idx = id2idx[track_id]
     seed_artist = artist_names[seed_idx]
 
-    # ── 1. Primary neighbours ───────────────────────────────────────
+    # 1. primary neighbours
     idxs, dists = ann.get_nns_by_item(seed_idx, k + 1, include_distances=True)
-    neigh_idxs = idxs[1:]   # drop seed
+    neigh_idxs = idxs[1:]
     neigh_dists = dists[1:]
 
-    # ── 2. Two closest tracks by same artist ────────────────────────
+    # 2. two closest tracks by same artist
     sa_idxs = [i for i, a in enumerate(
         artist_names) if a == seed_artist and i != seed_idx]
     sa_dists = [ann.get_distance(seed_idx, i) for i in sa_idxs]
     top_two = sorted(zip(sa_idxs, sa_dists), key=lambda x: x[1])[:2]
 
-    # Merge & dedupe
+    # merge + dedupe
     combined = {i: d for i, d in zip(neigh_idxs, neigh_dists)}
     for i, d in top_two:
         combined.setdefault(i, d)
 
-    # Keep best k
+    # best k
     items = sorted(combined.items(), key=lambda x: x[1])[:k]
-
-    # Convert angular dist 0–2 → similarity 1–0
     def to_sim(d): return round((2 - d) / 2, 4)
 
     return [
@@ -170,7 +165,7 @@ def recommend(
     ]
 
 
-# ── Local dev entrypoint (gunicorn/uvicorn not needed on Heroku) ────
+# ── Local dev entrypoint ────────────────────────────────────────────
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("app:app", host="0.0.0.0", port=8000, reload=True)

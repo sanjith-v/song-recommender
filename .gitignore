@@ -1,1 +1,5 @@
 spotify_data.csv
+
+# Annoy artifacts
+annoy_index.ann
+metadata.joblib

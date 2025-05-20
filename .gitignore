@@ -7,3 +7,10 @@ metadata.joblib
 # Annoy artifacts
 annoy_index.ann
 metadata.joblib
+
+# Annoy artifacts (never commit)
+annoy_index.ann
+metadata.joblib
+spotify_data.csv
+__pycache__/
+*.py[cod]

@@ -1,0 +1,11 @@
+# core web stack
+fastapi==0.111.0
+uvicorn[standard]==0.30.1
+
+# data + index
+pandas==2.2.2
+numpy==1.26.4
+annoy==1.17.3
+joblib==1.4.2
+
+

@@ -5,6 +5,7 @@ from typing import List, Optional, Generator
 
 import joblib
 import pandas as pd
+import requests
 from annoy import AnnoyIndex
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -12,35 +13,58 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
-# ── Paths ────────────────────────────────────────────────────────────
+# ── S3 URLs ──────────────────────────────────────────────────────────
+ANN_URL = "https://my-spotify-indices.s3.us-east-2.amazonaws.com/annoy_index.ann"
+META_URL = "https://my-spotify-indices.s3.us-east-2.amazonaws.com/metadata.joblib"
+
+# ── Local paths ──────────────────────────────────────────────────────
 BASE_DIR = Path(__file__).parent
 ANNOY_PATH = BASE_DIR / "annoy_index.ann"
 META_PATH = BASE_DIR / "metadata.joblib"
 STATIC_DIR = BASE_DIR / "static"
 
+
+def _fetch_if_needed(url: str, dest: Path):
+    """
+    Download from `url` if `dest` is missing or suspiciously small (pointer file).
+    """
+    if not dest.exists() or dest.stat().st_size < 1_000_000:
+        resp = requests.get(url, timeout=120)
+        resp.raise_for_status()
+        dest.write_bytes(resp.content)
+
 # ── FastAPI app with lifespan loader ─────────────────────────────────
 
 
 def lifespan(app: FastAPI) -> Generator[None, None, None]:
-    """Load index + metadata once per worker; rebuild search DataFrame."""
-    # ---------- Metadata ----------
-    if not META_PATH.exists():
-        raise RuntimeError(f"{META_PATH} missing in slug")
-    meta = joblib.load(META_PATH)
+    # 1) Ensure metadata.joblib is present
+    _fetch_if_needed(META_URL, META_PATH)
+
+    # 2) Load metadata
+    try:
+        meta = joblib.load(META_PATH)
+    except Exception as e:
+        raise RuntimeError(
+            f"{META_PATH} could not be un-pickled. "
+            "Did the real file make it into the slug?"
+        ) from e
 
     track_ids = meta["track_ids"]
     track_names = meta["track_names"]
     artist_names = meta["artist_names"]
     id2idx = meta["id2idx"]
     f_dim = meta["f_dim"]
-    years = meta.get("years")  # optional
+    years = meta.get("years")
 
-    # ---------- Annoy Index ----------
+    # 3) Ensure Annoy index is present
+    _fetch_if_needed(ANN_URL, ANNOY_PATH)
+
+    # 4) Load Annoy index
     ann = AnnoyIndex(f_dim, "angular")
     if not ann.load(str(ANNOY_PATH)):
-        raise RuntimeError("Could not load Annoy index")
+        raise RuntimeError(f"Could not load Annoy index from {ANNOY_PATH}")
 
-    # ---------- Build search DataFrame ----------
+    # 5) Build search DataFrame from metadata arrays
     data = {
         "track_id":    track_ids,
         "track_name":  track_names,
@@ -48,11 +72,10 @@ def lifespan(app: FastAPI) -> Generator[None, None, None]:
     }
     if years is not None:
         data["year"] = years
-
     df = pd.DataFrame(data)
-    df["track_name_lc"] = df["track_name"].str.lower()  # helper col
+    df["track_name_lc"] = df["track_name"].str.lower()
 
-    # ---------- Expose to app.state ----------
+    # 6) Expose to app.state
     app.state.df = df
     app.state.ann_index = ann
     app.state.track_ids = track_ids
@@ -60,17 +83,8 @@ def lifespan(app: FastAPI) -> Generator[None, None, None]:
     app.state.artist_names = artist_names
     app.state.id2idx = id2idx
 
-    yield  # ---- server starts here ----
+    yield  # ── application starts serving here ──
     # (optional) cleanup on shutdown
-
-
-try:
-    meta = joblib.load(META_PATH)
-except Exception as e:
-    raise RuntimeError(
-        f"{META_PATH} could not be un-pickled. "
-        "Did the real file make it into the slug?"
-    ) from e
 
 
 app = FastAPI(title="Spotify Recommender (Annoy)", lifespan=lifespan)
@@ -143,23 +157,23 @@ def recommend(
     seed_idx = id2idx[track_id]
     seed_artist = artist_names[seed_idx]
 
-    # 1. primary neighbours
+    # 1) Primary neighbours
     idxs, dists = ann.get_nns_by_item(seed_idx, k + 1, include_distances=True)
     neigh_idxs = idxs[1:]
     neigh_dists = dists[1:]
 
-    # 2. two closest tracks by same artist
+    # 2) Two closest by same artist
     sa_idxs = [i for i, a in enumerate(
         artist_names) if a == seed_artist and i != seed_idx]
     sa_dists = [ann.get_distance(seed_idx, i) for i in sa_idxs]
     top_two = sorted(zip(sa_idxs, sa_dists), key=lambda x: x[1])[:2]
 
-    # merge + dedupe
+    # Merge & dedupe
     combined = {i: d for i, d in zip(neigh_idxs, neigh_dists)}
     for i, d in top_two:
         combined.setdefault(i, d)
 
-    # best k
+    # Keep best k
     items = sorted(combined.items(), key=lambda x: x[1])[:k]
     def to_sim(d): return round((2 - d) / 2, 4)
 

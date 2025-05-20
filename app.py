@@ -14,7 +14,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 # ── S3 URLs ──────────────────────────────────────────────────────────
-ANN_URL = "https://my-spotify-indices.s3.us-east-2.amazonaws.com/annoy_index.ann"
+ANN_URL = "https://my-spotify-indices.s3.us-east-2.amazonaws.com/annoy_index_small.ann"
 META_URL = "https://my-spotify-indices.s3.us-east-2.amazonaws.com/metadata.joblib"
 
 # ── Local paths ──────────────────────────────────────────────────────
